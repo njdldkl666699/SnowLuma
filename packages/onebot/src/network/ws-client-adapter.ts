@@ -333,6 +333,7 @@ export class WsClientAdapter extends IOneBotNetworkAdapter<WsClientNetwork> {
             text,
             (frame) => safeSendAsync(socket, frame),
             () => socket.readyState === 1,
+            this.name,
         );
     }
 

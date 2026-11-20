@@ -11,6 +11,7 @@ import {
 import type { GroupSystemMessageQuery } from './modules/contact-actions';
 import type { ForwardPreviewMeta } from './modules/message-actions';
 import type { ReadSessionTargets } from './message-store';
+import type { CompiledMessageFilter } from './message-filter';
 import type { JsonObject, JsonValue, MessageMeta } from './types';
 import { RETCODE, failedResponse, okResponse } from './types';
 import {
@@ -171,6 +172,13 @@ export interface ActionRecord {
 }
 export type ActionObserver = (rec: ActionRecord) => void;
 
+/**
+ * Resolves the compiled outbound message filter for the adapter that submitted
+ * an action. Injected by the owning instance; `null` means "no rules / unknown
+ * source", which never blocks.
+ */
+export type OutputFilterResolver = (source: string | undefined) => CompiledMessageFilter | null;
+
 export class ApiHandler {
     /** Handler + dispatch kind live in one record so stream classification can
      *  never outlive or drift from the handler it describes. */
@@ -183,6 +191,13 @@ export class ApiHandler {
     /** Debug-stream taps — notified after every handled action. Attached
      *  on-demand (ref-counted) by the WebUI debug stream. */
     private readonly observers = new Set<ActionObserver>();
+    /** Outbound message filter lookup by adapter name. */
+    private outputFilterResolver: OutputFilterResolver | null = null;
+
+    /** Wire the per-adapter outbound message filter used to block send actions. */
+    setOutputFilterResolver(resolver: OutputFilterResolver | null): void {
+        this.outputFilterResolver = resolver;
+    }
 
     /** Observe handled actions (debug). Returns an unsubscribe. */
     setObserver(cb: ActionObserver): () => void {
@@ -258,8 +273,9 @@ export class ApiHandler {
         action: string,
         params: JsonObject,
         sink?: StreamSink,
+        source?: string,
     ): Promise<import('./types').ApiResponse> {
-        return runWithTraceRequest(() => this.handleInContext(action, params, sink));
+        return runWithTraceRequest(() => this.handleInContext(action, params, sink, source));
     }
 
     traceQuiescedAction(
@@ -296,6 +312,7 @@ export class ApiHandler {
         action: string,
         params: JsonObject,
         sink?: StreamSink,
+        source?: string,
     ): Promise<import('./types').ApiResponse> {
         const startedAt = Date.now();
         this.traceActionInput(action, params);
@@ -318,6 +335,27 @@ export class ApiHandler {
             this.log.debug('unknown action %s', action);
             this.traceActionTerminal(action, response, startedAt, 'failed', 'unknown_action');
             return response;
+        }
+
+        // Outbound message filter: a send action from a filtered adapter that
+        // matches its rules fails visibly instead of being silently swallowed.
+        if (source !== undefined && this.outputFilterResolver !== null) {
+            const filter = this.outputFilterResolver(source);
+
+            if (filter !== null && filter.blocksAction(action, params)) {
+                const response = failedResponse(
+                    RETCODE.ACTION_FAILED,
+                    'blocked by output message filter',
+                );
+                this.log.info(
+                    'action %s from adapter [%s] blocked by output message filter',
+                    action,
+                    source,
+                );
+                this.traceActionTerminal(action, response, startedAt, 'failed', 'output_filter');
+                this.notifyObservers(action, params, response, Date.now() - startedAt);
+                return response;
+            }
         }
 
         return this.runAction(action, registered.handler, params, sink, startedAt);
@@ -405,7 +443,8 @@ export class ApiHandler {
             | 'handler_threw'
             | 'transport_closed'
             | 'unknown_action'
-            | 'quiesced',
+            | 'quiesced'
+            | 'output_filter',
     ): void {
         this.log.trace(() => [
             'action_terminal action=%s outcome=%s reason=%s ms=%d response=%s',
@@ -450,6 +489,7 @@ export class ApiHandler {
         rawRequest: string,
         emit: (json: string) => void | Promise<void>,
         isAlive?: () => boolean,
+        source?: string,
     ): Promise<void> {
         const bad = (): Promise<void> =>
             Promise.resolve(
@@ -471,7 +511,7 @@ export class ApiHandler {
         const { action, params, echo } = request;
 
         if (!this.isStreamAction(action)) {
-            const response = await this.handle(action, params);
+            const response = await this.handle(action, params, undefined, source);
 
             if (echo !== undefined) {
                 response.echo = echo;
@@ -490,7 +530,7 @@ export class ApiHandler {
                 await emit(JSON.stringify(wrapStreamFrame(frame, echo)));
             },
         };
-        const response = await this.handle(action, params, sink);
+        const response = await this.handle(action, params, sink, source);
         await emit(JSON.stringify(wrapStreamTerminal(response, echo)));
     }
 }

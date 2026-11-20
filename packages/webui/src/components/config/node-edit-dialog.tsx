@@ -33,6 +33,7 @@ import { allowEmptyInboundAccessToken } from '@/lib/transport-security';
 import type {
     HttpClientNetwork,
     HttpServerNetwork,
+    MessageFilterConfig,
     MessageFormat,
     NetworkKind,
     OneBotNetworks,
@@ -41,6 +42,7 @@ import type {
     WsServerNetwork,
 } from '@/types';
 import { generateAccessToken, NETWORK_TABS } from './defaults';
+import { MessageFilterEditor } from './message-filter-editor';
 
 type AnyAdapter<K extends NetworkKind> = OneBotNetworks[K][number];
 
@@ -288,12 +290,75 @@ export function NodeEditDialog<K extends NetworkKind>(props: NodeEditDialogProps
                         </SettingRow>
                     </div>
                 </Section>
+
+                <Section caption="消息过滤" delay={0.2}>
+                    <div className="flex flex-col gap-3 p-4">
+                        <p className="text-xs leading-relaxed text-muted-foreground">
+                            该适配器的独立规则，各节选「跟随账号默认」即继承通用设置里的账号级配置。
+                        </p>
+                        <MessageFilterToggle
+                            value={draft.messageFilter}
+                            onChange={(messageFilter) =>
+                                patch({ messageFilter } as Partial<AnyAdapter<K>>)
+                            }
+                        />
+                    </div>
+                </Section>
             </div>
         </Modal>
     );
 }
 
 // ─────────────── grouped-list scaffolding ───────────────
+
+/** Per-adapter filter override: collapsed by default (inherit everything);
+ *  enabling reveals the full editor with 'default' inheritance options. */
+function MessageFilterToggle({
+    value,
+    onChange,
+}: {
+    value: MessageFilterConfig | undefined;
+    onChange: (next: MessageFilterConfig | undefined) => void;
+}) {
+    return (
+        <div className="flex flex-col gap-3">
+            <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                    <Label>独立规则</Label>
+                    <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                        关闭时完全跟随账号默认配置。
+                    </p>
+                </div>
+                <ToggleSwitch
+                    value={value !== undefined}
+                    onChange={(v) => onChange(v ? makeOverrideDefaults() : undefined)}
+                    ariaLabel="启用独立消息过滤规则"
+                />
+            </div>
+            {value !== undefined && (
+                <MessageFilterEditor value={value} onChange={onChange} allowDefault />
+            )}
+        </div>
+    );
+}
+
+/** All-'default' override: every section inherits the account defaults. */
+function makeOverrideDefaults(): MessageFilterConfig {
+    return {
+        userId: { mode: 'default', ids: [] },
+        groupId: { mode: 'default', ids: [] },
+        message: {
+            mode: 'default',
+            filters: [],
+            prefix: [],
+            prefixReplace: '',
+        },
+        privateMessage: { mode: 'default', filters: [], prefix: [], prefixReplace: '' },
+        groupMessage: { mode: 'default', filters: [], prefix: [], prefixReplace: '' },
+        outputMessage: { mode: 'default', filters: [] },
+        removeAts: [],
+    };
+}
 
 /** Captioned inset section — the iOS "grouped list" unit. */
 function Section({

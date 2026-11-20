@@ -8,6 +8,8 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { ToggleSwitch } from '@/components/ui/toggle-switch';
 import { NotificationOptIn } from '@/components/config/notification-opt-in';
+import { MessageFilterEditor } from '@/components/config/message-filter-editor';
+import { makeDefaultMessageFilterConfig } from '@/components/config/defaults';
 import type { OneBotConfig, StatusCommandConfig } from '@/types';
 
 interface GeneralSettingsTabProps {
@@ -125,6 +127,29 @@ export function GeneralSettingsTab({ config, onChange }: GeneralSettingsTabProps
                 selectedIds={config.notifications?.channelIds ?? []}
                 onChange={(channelIds) => onChange({ ...config, notifications: { channelIds } })}
             />
+
+            <div className="flex flex-col gap-3 rounded-lg border bg-card/40 p-4">
+                <div className="min-w-0">
+                    <Label>消息过滤（账号默认）</Label>
+                    <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                        账号级默认规则，所有网络适配器继承；每个适配器可在节点编辑里独立覆盖。
+                        过滤只影响投递给下游的事件，本地消息历史始终保留原文。
+                    </p>
+                </div>
+                <MessageFilterEditor
+                    value={config.messageFilter}
+                    onChange={(messageFilter) => onChange({ ...config, messageFilter })}
+                />
+                <button
+                    type="button"
+                    className="self-start text-xs text-muted-foreground underline-offset-2 hover:underline"
+                    onClick={() =>
+                        onChange({ ...config, messageFilter: makeDefaultMessageFilterConfig() })
+                    }
+                >
+                    恢复默认（全部放行）
+                </button>
+            </div>
         </div>
     );
 }

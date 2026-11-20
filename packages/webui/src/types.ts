@@ -107,6 +107,9 @@ interface NetworkBase {
     accessToken?: string;
     messageFormat: MessageFormat;
     reportSelfMessage: boolean;
+    /** Per-adapter message filter override; `'default'` modes inherit the
+     *  account-level `messageFilter`. */
+    messageFilter?: MessageFilterConfig;
 }
 
 /** Mirrors the server's WsFrameLimitConfig: only adapters with a WS transport. */
@@ -160,12 +163,46 @@ export interface HistorySyncConfig {
     enabled: boolean;
 }
 
+export interface MessageFilterIdConfig {
+    mode: 'default' | 'on' | 'off' | 'whitelist' | 'blacklist';
+    ids: number[];
+}
+
+export interface MessageFilterContentConfig {
+    mode: 'default' | 'on' | 'off' | 'whitelist' | 'blacklist';
+    /** Regex patterns matched against each text segment. */
+    filters: string[];
+    /** Prefixes that bypass content filtering and get rewritten. */
+    prefix: string[];
+    /** Replacement for a matched prefix; empty removes the prefix. */
+    prefixReplace: string;
+}
+
+export interface MessageFilterOutputConfig {
+    mode: 'default' | 'on' | 'off' | 'blacklist';
+    filters: string[];
+}
+
+/** Message filter rules (mirrors @snowluma/onebot/types MessageFilterConfig). */
+export interface MessageFilterConfig {
+    userId: MessageFilterIdConfig;
+    groupId: MessageFilterIdConfig;
+    message: MessageFilterContentConfig;
+    privateMessage: MessageFilterContentConfig;
+    groupMessage: MessageFilterContentConfig;
+    outputMessage: MessageFilterOutputConfig;
+    /** `at` segment QQ numbers removed from delivered events. */
+    removeAts: string[];
+}
+
 export interface OneBotConfig {
     networks: OneBotNetworks;
     statusCommand: StatusCommandConfig;
     historySync: HistorySyncConfig;
     /** Per-account opt-in to global notification channels (by channel id). */
     notifications?: { channelIds: string[] };
+    /** Account-level message filter defaults. */
+    messageFilter?: MessageFilterConfig;
 }
 
 // ─── Global deployment settings (config/snowluma.json) ──────────────────────

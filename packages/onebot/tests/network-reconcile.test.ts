@@ -8,6 +8,7 @@ import {
     type NetworkAdapterContext,
 } from '../src/network';
 import type { DispatchPayload } from '../src/event-filter';
+import { makeDefaultMessageFilterConfig } from '../src/message-filter';
 import type { JsonObject, NetworkBase, OneBotConfig } from '../src/types';
 
 const CTX: NetworkAdapterContext = {
@@ -107,6 +108,7 @@ function emptyConfig(): OneBotConfig {
         statusCommand: { enabled: true, swallow: false, cooldownSeconds: 5, trigger: '#sl' },
         historySync: { enabled: false },
         notifications: { channelIds: [] },
+        messageFilter: makeDefaultMessageFilterConfig(),
     };
 }
 

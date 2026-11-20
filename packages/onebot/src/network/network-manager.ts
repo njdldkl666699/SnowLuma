@@ -2,10 +2,13 @@ import { createLogger } from '@snowluma/common/logger';
 import { errorMessage } from '@snowluma/common/errors';
 import { assertValidOneBotConfig } from '../config';
 import { buildDispatchPayload } from '../event-filter';
+import { compileMessageFilter, resolveMessageFilterConfig } from '../message-filter';
+import type { CompiledMessageFilter, EventDropReason } from '../message-filter';
 import type {
     HttpClientNetwork,
     HttpServerNetwork,
     JsonObject,
+    MessageFilterConfig,
     NetworkBase,
     OneBotConfig,
     WsClientNetwork,
@@ -23,6 +26,14 @@ export type DesiredNetworkAdapter =
     | { name: string; kind: 'httpClient'; config: HttpClientNetwork }
     | { name: string; kind: 'wsServer'; config: WsServerNetwork }
     | { name: string; kind: 'wsClient'; config: WsClientNetwork };
+
+interface ManagedAdapter {
+    kind: NetworkAdapterKind;
+    adapter: AnyAdapter;
+    /** Per-adapter compiled message filter; `null` when nothing can be dropped
+     *  or rewritten, so the shared dispatch payload stays usable. */
+    messageFilter: CompiledMessageFilter | null;
+}
 
 export type NetworkApplyPhase = 'open' | 'reload' | 'close' | 'replace' | 'restore' | 'shutdown';
 
@@ -71,6 +82,9 @@ export class OneBotNetworkManager {
     private accepting = true;
     private readonly inFlightEmits = new Set<Promise<void>>();
     private shutdownPromise: Promise<NetworkShutdownResult> | null = null;
+    /** Account-level filter defaults, resolved against each adapter's override
+     *  when that adapter is registered/reloaded. */
+    private messageFilterDefaults: MessageFilterConfig | undefined;
 
     /** Debug-stream taps — notified for every emitted event regardless of adapter
      *  state. Attached on-demand (ref-counted) by the WebUI debug stream. */
@@ -100,7 +114,16 @@ export class OneBotNetworkManager {
         }
 
         const kind = adapter.describeStatus().kind;
-        this.adapters.set(adapter.name, { kind, adapter: adapter as AnyAdapter });
+        this.adapters.set(adapter.name, {
+            kind,
+            adapter: adapter as AnyAdapter,
+            messageFilter: compileMessageFilter(
+                resolveMessageFilterConfig(
+                    this.messageFilterDefaults,
+                    adapter.currentConfig.messageFilter,
+                ),
+            ),
+        });
     }
 
     has(name: string): boolean {
@@ -109,6 +132,12 @@ export class OneBotNetworkManager {
 
     get(name: string): AnyAdapter | null {
         return this.adapters.get(name)?.adapter ?? null;
+    }
+
+    /** Compiled message filter for one adapter, resolved against the current
+     *  account defaults. `null` when the adapter has no effective rules. */
+    getMessageFilter(name: string): CompiledMessageFilter | null {
+        return this.adapters.get(name)?.messageFilter ?? null;
     }
 
     list(): AnyAdapter[] {
@@ -166,7 +195,10 @@ export class OneBotNetworkManager {
             return Promise.reject(new Error('network manager is shutting down'));
         }
 
-        return this.enqueue(() => this.reconcileNow(desired));
+        return this.enqueue(() => {
+            this.messageFilterDefaults = config.messageFilter;
+            return this.reconcileNow(desired);
+        });
     }
 
     /** Open registered adapters in order and report each failure. */
@@ -321,19 +353,52 @@ export class OneBotNetworkManager {
             JSON.stringify(active.map((adapter) => adapter.name)),
         ]);
 
-        const payload = buildDispatchPayload(event);
-        const tasks = active.map((adapter) =>
-            Promise.resolve()
-                .then(() => adapter.onEvent(event, payload))
-                .catch((error) => {
-                    log.warn('adapter [%s] onEvent error: %s', adapter.name, errorMessage(error));
-                    log.trace(() => [
-                        'report_target_failed target=%s error=%s',
-                        adapter.name,
-                        error instanceof Error ? (error.stack ?? error.message) : String(error),
-                    ]);
-                }),
-        );
+        // Adapters without rules share one payload; each filtered adapter gets
+        // its own verdict and, on rewrite, its own rebuilt payload.
+        const shared = buildDispatchPayload(event);
+        const tasks: Promise<void>[] = [];
+
+        for (const [name, { adapter, messageFilter }] of this.adapters) {
+            if (!adapter.isActive) {
+                continue;
+            }
+
+            let payload = shared;
+
+            if (messageFilter !== null) {
+                const outcome = messageFilter.apply(event);
+
+                if (outcome.action === 'drop') {
+                    log.debug(
+                        'message filter dropped event for adapter [%s]: reason=%s post_type=%s',
+                        name,
+                        outcome.reason satisfies EventDropReason,
+                        String(event.post_type ?? '?'),
+                    );
+                    log.trace(() => ['report_filtered target=%s reason=%s', name, outcome.reason]);
+                    continue;
+                }
+
+                if (outcome.action === 'rewrite') {
+                    payload = buildDispatchPayload(outcome.event);
+                }
+            }
+
+            const chosen = payload;
+            tasks.push(
+                Promise.resolve()
+                    .then(() => adapter.onEvent(event, chosen))
+                    .catch((error) => {
+                        log.warn('adapter [%s] onEvent error: %s', name, errorMessage(error));
+                        log.trace(() => [
+                            'report_target_failed target=%s error=%s',
+                            name,
+                            error instanceof Error ? (error.stack ?? error.message) : String(error),
+                        ]);
+                    }),
+            );
+        }
+
         await Promise.allSettled(tasks);
         log.trace('report_terminal outcome=settled');
     }
@@ -386,7 +451,13 @@ export class OneBotNetworkManager {
             return;
         }
 
-        this.adapters.set(next.name, { kind: next.kind, adapter });
+        this.adapters.set(next.name, {
+            kind: next.kind,
+            adapter,
+            messageFilter: compileMessageFilter(
+                resolveMessageFilterConfig(this.messageFilterDefaults, next.config.messageFilter),
+            ),
+        });
 
         try {
             await adapter.open();
@@ -414,6 +485,9 @@ export class OneBotNetworkManager {
             }
 
             await live.adapter.reload(next.config);
+            live.messageFilter = compileMessageFilter(
+                resolveMessageFilterConfig(this.messageFilterDefaults, next.config.messageFilter),
+            );
             live.adapter.clearApplyFailure();
         } catch (error) {
             let restored = false;
@@ -464,7 +538,13 @@ export class OneBotNetworkManager {
             return;
         }
 
-        this.adapters.set(next.name, { kind: next.kind, adapter: replacement });
+        this.adapters.set(next.name, {
+            kind: next.kind,
+            adapter: replacement,
+            messageFilter: compileMessageFilter(
+                resolveMessageFilterConfig(this.messageFilterDefaults, next.config.messageFilter),
+            ),
+        });
 
         try {
             await replacement.open();

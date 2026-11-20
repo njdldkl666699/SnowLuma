@@ -299,6 +299,7 @@ export class WsServerConnections {
             text,
             (frame) => safeSendAsync(socket, frame),
             () => socket.readyState === 1 && this.connections.has(socket),
+            this.name,
         );
     }
 

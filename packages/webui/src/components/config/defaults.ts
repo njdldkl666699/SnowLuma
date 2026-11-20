@@ -6,6 +6,10 @@
 import type {
     HttpClientNetwork,
     HttpServerNetwork,
+    MessageFilterConfig,
+    MessageFilterContentConfig,
+    MessageFilterIdConfig,
+    MessageFilterOutputConfig,
     MessageFormat,
     NetworkKind,
     OneBotNetworks,
@@ -162,4 +166,74 @@ export interface AdapterCommon {
     accessToken?: string;
     messageFormat: MessageFormat;
     reportSelfMessage: boolean;
+    messageFilter?: MessageFilterConfig;
+}
+
+// ─── Message filter defaults ────────────────────────────────────────────────
+
+export function makeDefaultFilterIdConfig(): MessageFilterIdConfig {
+    return { mode: 'on', ids: [] };
+}
+
+export function makeDefaultFilterContentConfig(): MessageFilterContentConfig {
+    return { mode: 'on', filters: [], prefix: [], prefixReplace: '' };
+}
+
+export function makeDefaultFilterOutputConfig(): MessageFilterOutputConfig {
+    return { mode: 'on', filters: [] };
+}
+
+/** All-pass account-level filter defaults (mirrors the server factory). */
+export function makeDefaultMessageFilterConfig(): MessageFilterConfig {
+    return {
+        userId: makeDefaultFilterIdConfig(),
+        groupId: makeDefaultFilterIdConfig(),
+        message: makeDefaultFilterContentConfig(),
+        privateMessage: { ...makeDefaultFilterContentConfig(), mode: 'default' },
+        groupMessage: { ...makeDefaultFilterContentConfig(), mode: 'default' },
+        outputMessage: makeDefaultFilterOutputConfig(),
+        removeAts: [],
+    };
+}
+
+/** Fill in any missing section of a (possibly partial) filter config. */
+export function normalizeMessageFilterConfig(
+    value: MessageFilterConfig | undefined,
+): MessageFilterConfig {
+    const base = makeDefaultMessageFilterConfig();
+
+    if (!value) {
+        return base;
+    }
+
+    return {
+        userId: { ...base.userId, ...value.userId },
+        groupId: { ...base.groupId, ...value.groupId },
+        message: { ...base.message, ...value.message },
+        privateMessage: { ...base.privateMessage, ...value.privateMessage },
+        groupMessage: { ...base.groupMessage, ...value.groupMessage },
+        outputMessage: { ...base.outputMessage, ...value.outputMessage },
+        removeAts: value.removeAts ?? [],
+    };
+}
+
+/** True when every section is permissive — used to keep saved configs lean. */
+export function isPermissiveMessageFilter(value: MessageFilterConfig): boolean {
+    const contentPermissive = (section: MessageFilterContentConfig): boolean => {
+        const mode = section.mode === 'default' || section.mode === 'on' ? 'on' : section.mode;
+        return mode === 'on' && section.filters.length === 0 && section.prefix.length === 0;
+    };
+
+    return (
+        (value.userId.mode === 'default' || value.userId.mode === 'on') &&
+        value.userId.ids.length === 0 &&
+        (value.groupId.mode === 'default' || value.groupId.mode === 'on') &&
+        value.groupId.ids.length === 0 &&
+        contentPermissive(value.message) &&
+        contentPermissive(value.privateMessage) &&
+        contentPermissive(value.groupMessage) &&
+        (value.outputMessage.mode === 'default' || value.outputMessage.mode === 'on') &&
+        value.outputMessage.filters.length === 0 &&
+        value.removeAts.length === 0
+    );
 }

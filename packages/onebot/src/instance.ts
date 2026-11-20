@@ -177,6 +177,12 @@ export class OneBotInstance {
         this.ctx = ctx;
 
         this.apiHandler = new ApiHandler(buildApiContext(ctx), uinNum > 0 ? uinNum : undefined);
+        // Outbound send actions are filtered by the submitting adapter's rules;
+        // internal callers (status command, quick operation) carry no source and
+        // are never blocked.
+        this.apiHandler.setOutputFilterResolver((source) =>
+            source === undefined ? null : this.networkManager.getMessageFilter(source),
+        );
         const networkCtx = this.buildNetworkContext();
         this.networkManager = new OneBotNetworkManager((desired) =>
             this.createNetworkAdapter(desired, networkCtx),

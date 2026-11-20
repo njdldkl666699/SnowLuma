@@ -594,11 +594,17 @@ export class HttpServerAdapter extends IOneBotNetworkAdapter<HttpServerNetwork> 
                     action,
                     params as JsonObject,
                     echo as JsonValue | undefined,
+                    this.name,
                 );
                 return;
             }
 
-            const response = await this.ctx.api.handle(action, params as JsonObject);
+            const response = await this.ctx.api.handle(
+                action,
+                params as JsonObject,
+                undefined,
+                this.name,
+            );
 
             if (echo !== undefined) {
                 response.echo = echo as JsonValue;
@@ -738,6 +744,7 @@ async function streamHttpResponse(
     action: string,
     params: JsonObject,
     echo: JsonValue | undefined,
+    source?: string,
 ): Promise<void> {
     res.statusCode = 200;
     const writeFrame = (frame: ApiResponse): Promise<void> =>
@@ -761,7 +768,7 @@ async function streamHttpResponse(
             await writeFrame(wrapStreamFrame(frame, echo));
         },
     };
-    const response = await api.handle(action, params, sink);
+    const response = await api.handle(action, params, sink, source);
     await writeFrame(wrapStreamTerminal(response, echo));
 
     if (!res.writableEnded && !res.destroyed) {

@@ -1,0 +1,9 @@
+# Overlay a freshly built SnowLuma runtime onto the stock image.
+# The stock image's QQ desktop, VNC stack, entrypoint and data layout stay
+# untouched; only the self-contained runtime bundle + WebUI client are
+# replaced. Native libs ship unchanged from packages/runtime/native (md5
+# already matches the stock image), so copying them is a no-op by content.
+FROM crpi-hkcfo9fwtwggvd1v.cn-hangzhou.personal.cr.aliyuncs.com/cola-devuse/snowluma:latest
+
+# Match the stock runtime ownership (uid/gid 1000 = "snowluma" in the image).
+COPY --chown=1000:1000 dist/ /app/runtime/

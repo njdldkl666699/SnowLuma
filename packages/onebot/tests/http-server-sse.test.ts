@@ -140,7 +140,8 @@ describe('HTTP OneBot SSE', () => {
         expect(streams[0].text()).toContain('retry: 3000\n\n');
         const action = await request('/api/get_status', { authorization: 'test-secret' }, 'POST');
         expect(action.statusCode).toBe(200);
-        expect(api.handle).toHaveBeenCalledWith('get_status', {});
+        // The adapter passes itself as the action source for outbound filtering.
+        expect(api.handle).toHaveBeenCalledWith('get_status', {}, undefined, 'sse');
         expect(adapter.describeStatus().detail).toContain('SSE 3 个客户端');
     });
 

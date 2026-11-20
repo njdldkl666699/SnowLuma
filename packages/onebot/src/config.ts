@@ -5,10 +5,15 @@ import { randomBytes } from 'crypto';
 import fs from 'fs';
 import { isIP } from 'node:net';
 import path from 'path';
+import { makeDefaultMessageFilterConfig } from './message-filter';
 import type {
     HttpClientNetwork,
     HttpServerNetwork,
     JsonObject,
+    MessageFilterConfig,
+    MessageFilterContentConfig,
+    MessageFilterIdConfig,
+    MessageFilterOutputConfig,
     MessageFormat,
     OneBotConfig,
     OneBotNetworks,
@@ -80,6 +85,7 @@ export function makeDefaultOneBotConfig(): OneBotConfig {
         statusCommand: makeDefaultStatusCommand(),
         historySync: { enabled: false },
         notifications: { channelIds: [] },
+        messageFilter: makeDefaultMessageFilterConfig(),
     };
 }
 
@@ -294,6 +300,7 @@ const RESTORE_TOP_LEVEL_KEYS = new Set([
     'statusCommand',
     'historySync',
     'notifications',
+    'messageFilter',
     'musicSignUrl',
     'httpServers',
     'httpClients',
@@ -311,6 +318,7 @@ const RESTORE_BASE_ADAPTER_KEYS = [
     'accessToken',
     'messageFormat',
     'reportSelfMessage',
+    'messageFilter',
 ] as const;
 
 function validateOneBotRestoreSource(value: JsonObject): void {
@@ -390,6 +398,10 @@ function validateOneBotRestoreSource(value: JsonObject): void {
     validateRestoreHistorySync(value.historySync);
     validateRestoreNotifications(value.notifications);
 
+    if (value.messageFilter !== undefined) {
+        validateRestoreMessageFilter(value.messageFilter, '$.messageFilter');
+    }
+
     const parsed = fromJson([value], false);
 
     for (const key of RESTORE_NETWORK_KEYS) {
@@ -461,6 +473,10 @@ function validateRestoreAdapterArray(
 
         if (raw.reportSelfMessage !== undefined && typeof raw.reportSelfMessage !== 'boolean') {
             invalid(`${pathAt}.reportSelfMessage must be a boolean`);
+        }
+
+        if (raw.messageFilter !== undefined) {
+            validateRestoreMessageFilter(raw.messageFilter, `${pathAt}.messageFilter`);
         }
 
         if (kind !== 'httpClients') {
@@ -638,6 +654,73 @@ function validateRestoreHistorySync(value: unknown): void {
     }
 }
 
+function validateRestoreMessageFilter(value: unknown, at: string): void {
+    if (!isObject(value)) {
+        invalid(`${at} must be an object`);
+    }
+
+    rejectUnknownKeys(
+        value,
+        new Set([
+            'userId',
+            'groupId',
+            'message',
+            'privateMessage',
+            'groupMessage',
+            'outputMessage',
+            'removeAts',
+        ]),
+        at,
+    );
+
+    const idKeys = ['userId', 'groupId'] as const;
+    const contentKeys = ['message', 'privateMessage', 'groupMessage'] as const;
+
+    for (const key of idKeys) {
+        const section = value[key];
+
+        if (section === undefined) {
+            continue;
+        }
+
+        if (!isObject(section)) {
+            invalid(`${at}.${key} must be an object`);
+        }
+
+        rejectUnknownKeys(section, new Set(['mode', 'ids']), `${at}.${key}`);
+    }
+
+    for (const key of contentKeys) {
+        const section = value[key];
+
+        if (section === undefined) {
+            continue;
+        }
+
+        if (!isObject(section)) {
+            invalid(`${at}.${key} must be an object`);
+        }
+
+        rejectUnknownKeys(
+            section,
+            new Set(['mode', 'filters', 'prefix', 'prefixReplace']),
+            `${at}.${key}`,
+        );
+    }
+
+    if (value.outputMessage !== undefined) {
+        if (!isObject(value.outputMessage)) {
+            invalid(`${at}.outputMessage must be an object`);
+        }
+
+        rejectUnknownKeys(value.outputMessage, new Set(['mode', 'filters']), `${at}.outputMessage`);
+    }
+
+    if (value.removeAts !== undefined && !Array.isArray(value.removeAts)) {
+        invalid(`${at}.removeAts must be an array`);
+    }
+}
+
 function rejectUnknownKeys(value: JsonObject, allowed: ReadonlySet<string>, at: string): void {
     const unknown = Object.keys(value).find((key) => !allowed.has(key));
 
@@ -786,6 +869,133 @@ export function assertValidOneBotConfig(value: unknown): asserts value is OneBot
             }
         }
     }
+
+    validateMessageFilterShape(value.messageFilter, 'messageFilter', false);
+}
+
+/**
+ * Strict shape check for a normalized message filter section. Account-level
+ * configs carry the full shape; adapter-level entries may omit it entirely.
+ * Regexes are compiled here so an invalid pattern is rejected at save time
+ * instead of being skipped silently at runtime.
+ */
+function validateMessageFilterShape(value: unknown, at: string, optional: boolean): void {
+    if (value === undefined) {
+        if (optional) {
+            return;
+        }
+
+        invalid(`${at} must be an object`);
+    }
+
+    if (!isObject(value)) {
+        invalid(`${at} must be an object`);
+    }
+
+    validateIdFilterShape(value.userId, `${at}.userId`);
+    validateIdFilterShape(value.groupId, `${at}.groupId`);
+    validateContentFilterShape(value.message, `${at}.message`);
+    validateContentFilterShape(value.privateMessage, `${at}.privateMessage`);
+    validateContentFilterShape(value.groupMessage, `${at}.groupMessage`);
+    validateOutputFilterShape(value.outputMessage, `${at}.outputMessage`);
+
+    if (!Array.isArray(value.removeAts)) {
+        invalid(`${at}.removeAts must be an array`);
+    }
+
+    for (const [index, qq] of value.removeAts.entries()) {
+        if (typeof qq !== 'string' || !/^\d+$/.test(qq)) {
+            invalid(`${at}.removeAts[${index}] must be a numeric string`);
+        }
+    }
+}
+
+function validateIdFilterShape(value: unknown, at: string): void {
+    if (!isObject(value)) {
+        invalid(`${at} must be an object`);
+    }
+
+    const modes = ['default', 'on', 'off', 'whitelist', 'blacklist'];
+
+    if (typeof value.mode !== 'string' || !modes.includes(value.mode)) {
+        invalid(`${at}.mode must be one of ${modes.join(', ')}`);
+    }
+
+    validatePositiveIdList(value.ids, `${at}.ids`);
+}
+
+function validateContentFilterShape(value: unknown, at: string): void {
+    if (!isObject(value)) {
+        invalid(`${at} must be an object`);
+    }
+
+    const modes = ['default', 'on', 'off', 'whitelist', 'blacklist'];
+
+    if (typeof value.mode !== 'string' || !modes.includes(value.mode)) {
+        invalid(`${at}.mode must be one of ${modes.join(', ')}`);
+    }
+
+    validatePatternList(value.filters, `${at}.filters`);
+
+    if (!Array.isArray(value.prefix)) {
+        invalid(`${at}.prefix must be an array`);
+    }
+
+    for (const [index, prefix] of value.prefix.entries()) {
+        if (typeof prefix !== 'string' || prefix === '') {
+            invalid(`${at}.prefix[${index}] must be a non-empty string`);
+        }
+    }
+
+    if (typeof value.prefixReplace !== 'string') {
+        invalid(`${at}.prefixReplace must be a string`);
+    }
+}
+
+function validateOutputFilterShape(value: unknown, at: string): void {
+    if (!isObject(value)) {
+        invalid(`${at} must be an object`);
+    }
+
+    const modes = ['default', 'on', 'off', 'blacklist'];
+
+    if (typeof value.mode !== 'string' || !modes.includes(value.mode)) {
+        invalid(`${at}.mode must be one of ${modes.join(', ')}`);
+    }
+
+    validatePatternList(value.filters, `${at}.filters`);
+}
+
+function validatePositiveIdList(value: unknown, at: string): void {
+    if (!Array.isArray(value)) {
+        invalid(`${at} must be an array`);
+    }
+
+    for (const [index, id] of value.entries()) {
+        if (typeof id !== 'number' || !Number.isSafeInteger(id) || id <= 0) {
+            invalid(`${at}[${index}] must be a positive integer`);
+        }
+    }
+}
+
+function validatePatternList(value: unknown, at: string): void {
+    if (!Array.isArray(value)) {
+        invalid(`${at} must be an array`);
+    }
+
+    for (const [index, pattern] of value.entries()) {
+        if (typeof pattern !== 'string' || pattern.trim() === '') {
+            invalid(`${at}[${index}] must be a non-empty string`);
+        }
+
+        try {
+            new RegExp(pattern, 'u');
+        } catch (err) {
+            invalid(
+                `${at}[${index}] is not a valid regex: ${err instanceof Error ? err.message : String(err)}`,
+            );
+        }
+    }
 }
 
 function validateNetworkList(
@@ -844,6 +1054,10 @@ function validateNetworkBase(item: JsonObject, at: string): void {
 
     if (typeof item.reportSelfMessage !== 'boolean') {
         invalid(`${at}.reportSelfMessage must be a boolean`);
+    }
+
+    if (item.messageFilter !== undefined) {
+        validateMessageFilterShape(item.messageFilter, `${at}.messageFilter`, true);
     }
 }
 
@@ -1077,6 +1291,9 @@ function toJsonObject(config: OneBotConfig, mode: 'snapshot' | 'overlay'): JsonO
         },
         historySync: { enabled: config.historySync.enabled },
         notifications: { channelIds: config.notifications?.channelIds ?? [] },
+        messageFilter: messageFilterToJson(
+            config.messageFilter ?? makeDefaultMessageFilterConfig(),
+        ),
     };
 }
 
@@ -1089,6 +1306,7 @@ function applyBase(
         messageFormat: MessageFormat;
         reportSelfMessage: boolean;
         maxPayloadBytes?: number;
+        messageFilter?: MessageFilterConfig;
     },
 ): void {
     out.name = n.name;
@@ -1107,6 +1325,31 @@ function applyBase(
     if (n.maxPayloadBytes !== undefined) {
         out.maxPayloadBytes = n.maxPayloadBytes;
     }
+
+    if (n.messageFilter) {
+        out.messageFilter = messageFilterToJson(n.messageFilter);
+    }
+}
+
+function messageFilterToJson(n: MessageFilterConfig): JsonObject {
+    return {
+        userId: { mode: n.userId.mode, ids: n.userId.ids },
+        groupId: { mode: n.groupId.mode, ids: n.groupId.ids },
+        message: contentFilterToJson(n.message),
+        privateMessage: contentFilterToJson(n.privateMessage),
+        groupMessage: contentFilterToJson(n.groupMessage),
+        outputMessage: { mode: n.outputMessage.mode, filters: n.outputMessage.filters },
+        removeAts: n.removeAts,
+    };
+}
+
+function contentFilterToJson(n: MessageFilterContentConfig): JsonObject {
+    return {
+        mode: n.mode,
+        filters: n.filters,
+        prefix: n.prefix,
+        prefixReplace: n.prefixReplace,
+    };
 }
 
 function httpServerToJson(n: HttpServerNetwork): JsonObject {
@@ -1207,9 +1450,139 @@ function fromJson(sources: JsonObject[], freshInstall: boolean): OneBotConfig {
         statusCommand: parseStatusCommand(sources),
         historySync: parseHistorySync(sources),
         notifications: parseNotifications(sources),
+        messageFilter: parseMessageFilter(sources),
     };
     assertValidOneBotConfig(config);
     return config;
+}
+
+/** Last-write-wins merge of the account-level message filter defaults across
+ *  config sources, with every section defaulting to all-pass. Per-adapter
+ *  overrides live inside each network entry and are parsed by `parseBase`. */
+function parseMessageFilter(sources: JsonObject[]): MessageFilterConfig {
+    const out = makeDefaultMessageFilterConfig();
+
+    for (const src of sources) {
+        const raw = src.messageFilter;
+
+        if (!isObject(raw)) {
+            continue;
+        }
+
+        mergeIdFilter(out.userId, raw.userId);
+        mergeIdFilter(out.groupId, raw.groupId);
+        mergeContentFilter(out.message, raw.message);
+        mergeContentFilter(out.privateMessage, raw.privateMessage);
+        mergeContentFilter(out.groupMessage, raw.groupMessage);
+        mergeOutputFilter(out.outputMessage, raw.outputMessage);
+
+        if (Array.isArray(raw.removeAts)) {
+            out.removeAts = raw.removeAts
+                .map((qq) =>
+                    typeof qq === 'number' && Number.isInteger(qq)
+                        ? String(qq)
+                        : String(qq ?? '').trim(),
+                )
+                .filter((qq) => qq !== '' && /^\d+$/.test(qq));
+        }
+    }
+
+    return out;
+}
+
+function mergeIdFilter(out: MessageFilterIdConfig, raw: unknown): void {
+    if (!isObject(raw)) {
+        return;
+    }
+
+    if (
+        raw.mode === 'default' ||
+        raw.mode === 'on' ||
+        raw.mode === 'off' ||
+        raw.mode === 'whitelist' ||
+        raw.mode === 'blacklist'
+    ) {
+        out.mode = raw.mode;
+    }
+
+    if (Array.isArray(raw.ids)) {
+        out.ids = dedupePositiveInts(raw.ids);
+    }
+}
+
+function mergeContentFilter(out: MessageFilterContentConfig, raw: unknown): void {
+    if (!isObject(raw)) {
+        return;
+    }
+
+    if (
+        raw.mode === 'default' ||
+        raw.mode === 'on' ||
+        raw.mode === 'off' ||
+        raw.mode === 'whitelist' ||
+        raw.mode === 'blacklist'
+    ) {
+        out.mode = raw.mode;
+    }
+
+    if (Array.isArray(raw.filters)) {
+        out.filters = raw.filters.filter(
+            (item): item is string => typeof item === 'string' && item.trim() !== '',
+        );
+    }
+
+    if (Array.isArray(raw.prefix)) {
+        out.prefix = raw.prefix.filter(
+            (item): item is string => typeof item === 'string' && item !== '',
+        );
+    }
+
+    if (typeof raw.prefixReplace === 'string') {
+        out.prefixReplace = raw.prefixReplace;
+    }
+}
+
+function mergeOutputFilter(out: MessageFilterOutputConfig, raw: unknown): void {
+    if (!isObject(raw)) {
+        return;
+    }
+
+    if (
+        raw.mode === 'default' ||
+        raw.mode === 'on' ||
+        raw.mode === 'off' ||
+        raw.mode === 'blacklist'
+    ) {
+        out.mode = raw.mode;
+    }
+
+    if (Array.isArray(raw.filters)) {
+        out.filters = raw.filters.filter(
+            (item): item is string => typeof item === 'string' && item.trim() !== '',
+        );
+    }
+}
+
+function dedupePositiveInts(value: unknown[]): number[] {
+    const seen = new Set<number>();
+    const out: number[] = [];
+
+    for (const item of value) {
+        const num = typeof item === 'number' && Number.isSafeInteger(item) ? item : Number(item);
+
+        if (!Number.isSafeInteger(num) || num <= 0) {
+            continue;
+        }
+
+        if (seen.has(num)) {
+            continue;
+        }
+
+        seen.add(num);
+        out.push(num);
+    }
+
+    return out;
 }
 
 function parseHistorySync(sources: JsonObject[]): { enabled: boolean } {
@@ -1422,7 +1795,41 @@ function parseBase(value: JsonObject, defaults: AdapterDefaults) {
             typeof value.reportSelfMessage === 'boolean'
                 ? value.reportSelfMessage
                 : defaults.reportSelfMessage,
+        messageFilter: parseAdapterMessageFilter(value.messageFilter),
     };
+}
+
+/**
+ * Parse one adapter's message filter override. Unknown shapes are ignored
+ * (the entry then inherits the account defaults). Validation of the fully
+ * normalized shape happens in `assertValidOneBotConfig` via
+ * `validateMessageFilterShape`.
+ */
+function parseAdapterMessageFilter(value: unknown): MessageFilterConfig | undefined {
+    if (!isObject(value)) {
+        return undefined;
+    }
+
+    const out = makeDefaultMessageFilterConfig();
+
+    mergeIdFilter(out.userId, value.userId);
+    mergeIdFilter(out.groupId, value.groupId);
+    mergeContentFilter(out.message, value.message);
+    mergeContentFilter(out.privateMessage, value.privateMessage);
+    mergeContentFilter(out.groupMessage, value.groupMessage);
+    mergeOutputFilter(out.outputMessage, value.outputMessage);
+
+    if (Array.isArray(value.removeAts)) {
+        out.removeAts = value.removeAts
+            .map((qq) =>
+                typeof qq === 'number' && Number.isInteger(qq)
+                    ? String(qq)
+                    : String(qq ?? '').trim(),
+            )
+            .filter((qq) => qq !== '' && /^\d+$/.test(qq));
+    }
+
+    return out;
 }
 
 function parseHttpServer(value: JsonObject, defaults: AdapterDefaults): HttpServerNetwork | null {

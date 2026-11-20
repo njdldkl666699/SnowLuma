@@ -36,6 +36,9 @@ export interface NetworkBase {
     messageFormat: MessageFormat;
     /** When `true`, this adapter receives `post_type='message_sent'` self events. */
     reportSelfMessage: boolean;
+    /** Per-adapter message filter override. Omitted or `'default'` modes inherit
+     *  from the account-level `messageFilter` defaults. */
+    messageFilter?: MessageFilterConfig;
 }
 
 /**
@@ -137,6 +140,56 @@ export interface HistorySyncConfig {
     enabled: boolean;
 }
 
+/**
+ * Per-conversation identity (user or group) allow/deny list. `'default'` is
+ * only meaningful in per-adapter overrides and inherits the account-level
+ * default; at the account level it behaves like `'on'` (no restriction).
+ */
+export interface MessageFilterIdConfig {
+    mode: 'default' | 'on' | 'off' | 'whitelist' | 'blacklist';
+    ids: number[];
+}
+
+/**
+ * Message content filter for incoming `post_type='message'` events. Regexes
+ * match each `text` segment of the message array. `prefix` entries bypass the
+ * regex verdict and rewrite the matched prefix to `prefixReplace` in the
+ * delivered event only — local history keeps the original text.
+ */
+export interface MessageFilterContentConfig {
+    mode: 'default' | 'on' | 'off' | 'whitelist' | 'blacklist';
+    /** Regex patterns compiled at config-validation time. */
+    filters: string[];
+    /** Prefixes that bypass content filtering. */
+    prefix: string[];
+    /** Replacement for a matched prefix; empty removes the prefix. */
+    prefixReplace: string;
+}
+
+/**
+ * Outgoing message filter applied to `send_msg`/`send_private_msg`/
+ * `send_group_msg` actions from this adapter. Matched actions fail with
+ * `RETCODE.ACTION_FAILED` instead of being sent.
+ */
+export interface MessageFilterOutputConfig {
+    mode: 'default' | 'on' | 'off' | 'blacklist';
+    /** Regex patterns matched against the outgoing plain text. */
+    filters: string[];
+}
+
+/** Message filter rules. Mirrors the OneBotFilter proxy configuration. */
+export interface MessageFilterConfig {
+    userId: MessageFilterIdConfig;
+    groupId: MessageFilterIdConfig;
+    /** Base content rules; `privateMessage`/`groupMessage` inherit via `'default'`. */
+    message: MessageFilterContentConfig;
+    privateMessage: MessageFilterContentConfig;
+    groupMessage: MessageFilterContentConfig;
+    outputMessage: MessageFilterOutputConfig;
+    /** `at` segment QQ numbers removed from delivered events. */
+    removeAts: string[];
+}
+
 /** Per-UIN OneBot configuration. */
 export interface OneBotConfig {
     networks: OneBotNetworks;
@@ -148,6 +201,9 @@ export interface OneBotConfig {
      *  validated slugs; channels themselves live in config/notifications.json).
      *  Always present after normalization. */
     notifications?: { channelIds: string[] };
+    /** Account-level message filter defaults. Always present after
+     *  normalization; per-adapter overrides inherit from it. */
+    messageFilter?: MessageFilterConfig;
 }
 
 export interface MessageMeta {
