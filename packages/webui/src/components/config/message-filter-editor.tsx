@@ -31,8 +31,14 @@ const idModeOptions = (allowDefault: boolean): ReadonlyArray<DropdownOption<IdMo
     { value: 'blacklist', label: '黑名单' },
 ];
 
-const contentModeOptions = (allowDefault: boolean): ReadonlyArray<DropdownOption<ContentMode>> => [
-    ...(allowDefault ? [{ value: 'default' as const, label: '跟随账号默认' }] : []),
+// Content sections (private/group message) carry the literal 'default' mode at
+// BOTH levels: account defaults keep it to inherit the base `message` rules,
+// per-adapter overrides use it to inherit the account counterpart. So unlike
+// the id/output option lists, 'default' is always present — only its label
+// differs by context. Without it the account-level dropdown shows the bare
+// placeholder and any selection falls back to it on the next save.
+const contentModeOptions = (accountLevel: boolean): ReadonlyArray<DropdownOption<ContentMode>> => [
+    { value: 'default', label: accountLevel ? '跟随通用规则' : '跟随账号默认' },
     { value: 'on', label: '不限制' },
     { value: 'off', label: '全部拦截' },
     { value: 'whitelist', label: '白名单' },
@@ -114,7 +120,7 @@ export function MessageFilterEditor({
                 section={config.privateMessage}
                 base={config.message}
                 onChange={(privateMessage) => patch({ privateMessage })}
-                allowDefault={allowDefault}
+                accountLevel={!allowDefault}
                 keyHint={`${uid}-private`}
             />
             <ContentSection
@@ -123,7 +129,7 @@ export function MessageFilterEditor({
                 section={config.groupMessage}
                 base={config.message}
                 onChange={(groupMessage) => patch({ groupMessage })}
-                allowDefault={allowDefault}
+                accountLevel={!allowDefault}
                 keyHint={`${uid}-group-msg`}
             />
             <OutputSection
@@ -192,7 +198,8 @@ interface ContentSectionProps {
     /** Base `message` section shown when this section is 'default'. */
     base: MessageFilterContentConfig;
     onChange: (next: MessageFilterContentConfig) => void;
-    allowDefault: boolean;
+    /** True on the account tab — 'default' then inherits the base rules. */
+    accountLevel: boolean;
     keyHint: string;
 }
 
@@ -202,7 +209,7 @@ function ContentSection({
     section,
     base,
     onChange,
-    allowDefault,
+    accountLevel,
     keyHint,
 }: ContentSectionProps) {
     const effective = section.mode === 'default' ? base : section;
@@ -213,14 +220,18 @@ function ContentSection({
                 <div className="min-w-0">
                     <Label>{label}</Label>
                     <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-                        {section.mode === 'default' ? '继承「通用消息规则」设置。' : desc}
+                        {section.mode === 'default'
+                            ? accountLevel
+                                ? '继承「通用消息规则」设置。'
+                                : '继承账号默认配置。'
+                            : desc}
                     </p>
                 </div>
                 <DropdownSelect
                     className="w-32 shrink-0"
                     ariaLabel={label}
                     value={section.mode}
-                    options={contentModeOptions(allowDefault)}
+                    options={contentModeOptions(accountLevel)}
                     onChange={(mode) => onChange({ ...section, mode })}
                 />
             </div>
