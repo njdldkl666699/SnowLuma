@@ -870,7 +870,10 @@ export function assertValidOneBotConfig(value: unknown): asserts value is OneBot
         }
     }
 
-    validateMessageFilterShape(value.messageFilter, 'messageFilter', false);
+    // Optional like `notifications`: an older WebUI client (or a hand-written
+    // POST body) still submits the pre-filter config shape, and the account
+    // simply runs with all-pass defaults until it next saves from the new UI.
+    validateMessageFilterShape(value.messageFilter, 'messageFilter', true);
 }
 
 /**

@@ -2,7 +2,11 @@ import { createLogger } from '@snowluma/common/logger';
 import { errorMessage } from '@snowluma/common/errors';
 import { assertValidOneBotConfig } from '../config';
 import { buildDispatchPayload } from '../event-filter';
-import { compileMessageFilter, resolveMessageFilterConfig } from '../message-filter';
+import {
+    compileMessageFilter,
+    makeDefaultMessageFilterConfig,
+    resolveMessageFilterConfig,
+} from '../message-filter';
 import type { CompiledMessageFilter, EventDropReason } from '../message-filter';
 import type {
     HttpClientNetwork,
@@ -196,7 +200,9 @@ export class OneBotNetworkManager {
         }
 
         return this.enqueue(() => {
-            this.messageFilterDefaults = config.messageFilter;
+            // A config saved by an older client carries no filter section; treat
+            // that as all-pass instead of keeping the previously saved rules.
+            this.messageFilterDefaults = config.messageFilter ?? makeDefaultMessageFilterConfig();
             return this.reconcileNow(desired);
         });
     }

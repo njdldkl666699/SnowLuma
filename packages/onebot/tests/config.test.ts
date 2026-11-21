@@ -58,6 +58,16 @@ describe('assertValidOneBotConfig', () => {
         );
     });
 
+    it('accepts a config saved by an older client without messageFilter', () => {
+        // Regression: an older WebUI (or a hand-written POST body) submits the
+        // pre-filter shape; the section must be optional like `notifications`
+        // instead of failing the whole save.
+        const config = makeDefaultOneBotConfig();
+        delete (config as Partial<typeof config>).messageFilter;
+
+        expect(() => assertValidOneBotConfig(config)).not.toThrow();
+    });
+
     it('allows a disabled client draft with an empty URL', () => {
         const config = makeDefaultOneBotConfig();
         config.networks.httpClients.push({
