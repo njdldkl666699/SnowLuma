@@ -187,7 +187,6 @@ export interface MessageFilterOutputConfig {
 export interface MessageFilterConfig {
     userId: MessageFilterIdConfig;
     groupId: MessageFilterIdConfig;
-    message: MessageFilterContentConfig;
     privateMessage: MessageFilterContentConfig;
     groupMessage: MessageFilterContentConfig;
     outputMessage: MessageFilterOutputConfig;

@@ -1,4 +1,10 @@
-import type { MessageFormat, OneBotConfig, StatusCommandConfig } from '@/types';
+import type {
+    MessageFilterConfig,
+    MessageFormat,
+    OneBotConfig,
+    StatusCommandConfig,
+} from '@/types';
+import { normalizeMessageFilterConfig } from '@/components/config/defaults';
 
 const DEFAULT_STATUS_COMMAND: StatusCommandConfig = {
     enabled: true,
@@ -64,6 +70,13 @@ export function normalizeOneBotConfig(raw: unknown): OneBotConfig {
     const list = (x: unknown): Record<string, unknown>[] =>
         Array.isArray(x) ? x.map((it) => normalize(it as Record<string, unknown>)) : [];
 
+    // messageFilter must round-trip: dropping it here made the debounced
+    // auto-save POST the whole config back without the section, wiping every
+    // filter rule the user had just entered.
+    const messageFilter: MessageFilterConfig | undefined = isObjectRecord(cfg.messageFilter)
+        ? normalizeMessageFilterConfig(cfg.messageFilter as Partial<MessageFilterConfig>)
+        : undefined;
+
     return {
         networks: {
             httpServers: list(
@@ -84,5 +97,10 @@ export function normalizeOneBotConfig(raw: unknown): OneBotConfig {
                 (cfg.historySync as Record<string, unknown>).enabled === true,
         },
         notifications: normalizeNotifications(cfg.notifications),
+        ...(messageFilter ? { messageFilter } : {}),
     };
+}
+
+function isObjectRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === 'object' && value !== null && !Array.isArray(value);
 }

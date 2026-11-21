@@ -347,12 +347,6 @@ function makeOverrideDefaults(): MessageFilterConfig {
     return {
         userId: { mode: 'default', ids: [] },
         groupId: { mode: 'default', ids: [] },
-        message: {
-            mode: 'default',
-            filters: [],
-            prefix: [],
-            prefixReplace: '',
-        },
         privateMessage: { mode: 'default', filters: [], prefix: [], prefixReplace: '' },
         groupMessage: { mode: 'default', filters: [], prefix: [], prefixReplace: '' },
         outputMessage: { mode: 'default', filters: [] },

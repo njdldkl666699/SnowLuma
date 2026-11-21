@@ -674,7 +674,9 @@ function validateRestoreMessageFilter(value: unknown, at: string): void {
     );
 
     const idKeys = ['userId', 'groupId'] as const;
-    const contentKeys = ['message', 'privateMessage', 'groupMessage'] as const;
+    // 'message' stays in the allow-list above so legacy backups restore; it
+    // has no standalone meaning anymore and is simply ignored.
+    const contentKeys = ['privateMessage', 'groupMessage'] as const;
 
     for (const key of idKeys) {
         const section = value[key];
@@ -897,7 +899,6 @@ function validateMessageFilterShape(value: unknown, at: string, optional: boolea
 
     validateIdFilterShape(value.userId, `${at}.userId`);
     validateIdFilterShape(value.groupId, `${at}.groupId`);
-    validateContentFilterShape(value.message, `${at}.message`);
     validateContentFilterShape(value.privateMessage, `${at}.privateMessage`);
     validateContentFilterShape(value.groupMessage, `${at}.groupMessage`);
     validateOutputFilterShape(value.outputMessage, `${at}.outputMessage`);
@@ -1338,7 +1339,6 @@ function messageFilterToJson(n: MessageFilterConfig): JsonObject {
     return {
         userId: { mode: n.userId.mode, ids: n.userId.ids },
         groupId: { mode: n.groupId.mode, ids: n.groupId.ids },
-        message: contentFilterToJson(n.message),
         privateMessage: contentFilterToJson(n.privateMessage),
         groupMessage: contentFilterToJson(n.groupMessage),
         outputMessage: { mode: n.outputMessage.mode, filters: n.outputMessage.filters },
@@ -1474,7 +1474,6 @@ function parseMessageFilter(sources: JsonObject[]): MessageFilterConfig {
 
         mergeIdFilter(out.userId, raw.userId);
         mergeIdFilter(out.groupId, raw.groupId);
-        mergeContentFilter(out.message, raw.message);
         mergeContentFilter(out.privateMessage, raw.privateMessage);
         mergeContentFilter(out.groupMessage, raw.groupMessage);
         mergeOutputFilter(out.outputMessage, raw.outputMessage);
@@ -1817,7 +1816,6 @@ function parseAdapterMessageFilter(value: unknown): MessageFilterConfig | undefi
 
     mergeIdFilter(out.userId, value.userId);
     mergeIdFilter(out.groupId, value.groupId);
-    mergeContentFilter(out.message, value.message);
     mergeContentFilter(out.privateMessage, value.privateMessage);
     mergeContentFilter(out.groupMessage, value.groupMessage);
     mergeOutputFilter(out.outputMessage, value.outputMessage);

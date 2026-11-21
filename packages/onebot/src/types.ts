@@ -177,12 +177,11 @@ export interface MessageFilterOutputConfig {
     filters: string[];
 }
 
-/** Message filter rules. Mirrors the OneBotFilter proxy configuration. */
+/** Message filter rules. The account-level config is the default; per-adapter
+ *  sections left at `'default'` inherit their account-level counterpart. */
 export interface MessageFilterConfig {
     userId: MessageFilterIdConfig;
     groupId: MessageFilterIdConfig;
-    /** Base content rules; `privateMessage`/`groupMessage` inherit via `'default'`. */
-    message: MessageFilterContentConfig;
     privateMessage: MessageFilterContentConfig;
     groupMessage: MessageFilterContentConfig;
     outputMessage: MessageFilterOutputConfig;

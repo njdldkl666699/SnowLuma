@@ -18,18 +18,12 @@ Rules live in the per-account OneBot config (`config/onebot_<uin>.json`) under `
 ```jsonc
 {
     "messageFilter": {
-        "userId":       { "mode": "blacklist", "ids": [10001, 10002] },
-        "groupId":      { "mode": "on", "ids": [] },
-        "message": {
-            "mode": "blacklist",
-            "filters": ["spam\\d+"],
-            "prefix": ["#", "b1"],
-            "prefixReplace": "/"
-        },
-        "privateMessage": { "mode": "default", "filters": [], "prefix": [], "prefixReplace": "" },
+        "userId":         { "mode": "blacklist", "ids": [10001, 10002] },
+        "groupId":        { "mode": "on", "ids": [] },
+        "privateMessage": { "mode": "blacklist", "filters": ["spam\\d+"], "prefix": ["#", "b1"], "prefixReplace": "/" },
         "groupMessage":   { "mode": "whitelist", "filters": ["^!"], "prefix": [], "prefixReplace": "" },
-        "outputMessage": { "mode": "blacklist", "filters": ["广告"] },
-        "removeAts": ["131415"]
+        "outputMessage":  { "mode": "blacklist", "filters": ["广告"] },
+        "removeAts":      ["131415"]
     }
 }
 ```
@@ -40,18 +34,19 @@ Rules live in the per-account OneBot config (`config/onebot_<uin>.json`) under `
 | --- | --- | --- |
 | `userId` | sender QQ (private and group) | `on`, `off`, `whitelist`, `blacklist` |
 | `groupId` | group messages | `on`, `off`, `whitelist`, `blacklist` |
-| `message` | base content rules | `on`, `off`, `whitelist`, `blacklist` |
 | `privateMessage` | private-chat content | previous + `default` |
 | `groupMessage` | group content | previous + `default` |
 | `outputMessage` | outgoing send actions | `on`, `off`, `blacklist` |
 | `removeAts` | `at` segments to strip | list of QQ number strings |
 
+There is no base `message` section: the account-level config is the default,
+and `privateMessage` / `groupMessage` stand alone.
+
 ### Inheritance (`default`)
 
 Per-adapter overrides may set any section to `default`:
 
-- `userId` / `groupId` / `message` / `outputMessage` `default` → inherit the account-level counterpart (or all-pass when the account config omits it).
-- `privateMessage` / `groupMessage` `default` → inherit the account-level same-name section; when that is also `default`, inherit the resolved `message` section. Account-level configs treat `default` as `on`.
+- Every section's `default` → inherit the account-level counterpart of the same name (or all-pass when the account config omits it). Account-level configs treat `default` as `on`.
 - A present adapter config **replaces** the account `removeAts` list (an empty list disables removal for that adapter).
 
 ### Content matching order

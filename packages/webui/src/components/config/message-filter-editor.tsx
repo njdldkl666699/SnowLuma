@@ -1,17 +1,13 @@
 // Message filter rules editor — shared by the account-level config tab and
-// the per-adapter override section in the node edit dialog. Edits a
-// MessageFilterConfig in place through onChange; "default" modes only appear
-// when allowDefault is set (per-adapter overrides), mirroring the server's
-// inheritance chain: section 'default' → account counterpart → base message.
+// the per-adapter override section in the node edit dialog. The account-level
+// config IS the default; per-node sections set to '跟随账号默认' inherit the
+// account counterpart of the same name (there is no base `message` section).
 
-import { useId } from 'react';
+import { useEffect, useId, useState } from 'react';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { DropdownSelect, type DropdownOption } from '@/components/ui/dropdown-select';
-import {
-    makeDefaultMessageFilterConfig,
-    normalizeMessageFilterConfig,
-} from '@/components/config/defaults';
+import { normalizeMessageFilterConfig } from '@/components/config/defaults';
 import type {
     MessageFilterConfig,
     MessageFilterContentConfig,
@@ -31,14 +27,8 @@ const idModeOptions = (allowDefault: boolean): ReadonlyArray<DropdownOption<IdMo
     { value: 'blacklist', label: '黑名单' },
 ];
 
-// Content sections (private/group message) carry the literal 'default' mode at
-// BOTH levels: account defaults keep it to inherit the base `message` rules,
-// per-adapter overrides use it to inherit the account counterpart. So unlike
-// the id/output option lists, 'default' is always present — only its label
-// differs by context. Without it the account-level dropdown shows the bare
-// placeholder and any selection falls back to it on the next save.
-const contentModeOptions = (accountLevel: boolean): ReadonlyArray<DropdownOption<ContentMode>> => [
-    { value: 'default', label: accountLevel ? '跟随通用规则' : '跟随账号默认' },
+const contentModeOptions = (allowDefault: boolean): ReadonlyArray<DropdownOption<ContentMode>> => [
+    ...(allowDefault ? [{ value: 'default' as const, label: '跟随账号默认' }] : []),
     { value: 'on', label: '不限制' },
     { value: 'off', label: '全部拦截' },
     { value: 'whitelist', label: '白名单' },
@@ -68,15 +58,52 @@ function parseIds(text: string): number[] {
     return out;
 }
 
-function formatIds(ids: number[]): string {
-    return ids.join(', ');
-}
+/**
+ * Lines-as-textarea with deferred commit. The parent (config page) auto-saves
+ * on every change and re-normalizes the config object, so a keystroke-driven
+ * controlled textarea gets its value replaced mid-edit — losing the cursor,
+ * swallowing trailing newlines, and racing the debounce. This component keeps
+ * a local draft while focused and commits parsed lines only on blur (or when
+ * the section identity changes), so typing stays uninterrupted.
+ */
+function LinesInput({
+    id,
+    rows,
+    value,
+    placeholder,
+    onCommit,
+}: {
+    id: string;
+    rows: number;
+    value: string[];
+    placeholder?: string;
+    onCommit: (lines: string[]) => void;
+}) {
+    const [draft, setDraft] = useState<string>(() => value.join('\n'));
 
-function parseLines(text: string): string[] {
-    return text
-        .split('\n')
-        .map((line) => line.trim())
-        .filter((line) => line !== '');
+    useEffect(() => {
+        setDraft(value.join('\n'));
+    }, [value]);
+
+    return (
+        <textarea
+            id={id}
+            className="w-full rounded-md border bg-background px-3 py-2 font-mono text-xs leading-relaxed"
+            rows={rows}
+            spellCheck={false}
+            value={draft}
+            placeholder={placeholder}
+            onChange={(e) => setDraft(e.target.value)}
+            onBlur={() =>
+                onCommit(
+                    draft
+                        .split('\n')
+                        .map((line) => line.trim())
+                        .filter((line) => line !== ''),
+                )
+            }
+        />
+    );
 }
 
 interface MessageFilterEditorProps {
@@ -118,18 +145,16 @@ export function MessageFilterEditor({
                 label="私聊消息规则"
                 desc="正则匹配消息文本；命中前缀直接放行并改写"
                 section={config.privateMessage}
-                base={config.message}
                 onChange={(privateMessage) => patch({ privateMessage })}
-                accountLevel={!allowDefault}
+                allowDefault={allowDefault}
                 keyHint={`${uid}-private`}
             />
             <ContentSection
                 label="群消息规则"
                 desc="正则匹配消息文本；命中前缀直接放行并改写"
                 section={config.groupMessage}
-                base={config.message}
                 onChange={(groupMessage) => patch({ groupMessage })}
-                accountLevel={!allowDefault}
+                allowDefault={allowDefault}
                 keyHint={`${uid}-group-msg`}
             />
             <OutputSection
@@ -174,11 +199,11 @@ function IdSection({ label, desc, section, onChange, allowDefault, keyHint }: Id
             </div>
             {(section.mode === 'whitelist' || section.mode === 'blacklist') && (
                 <div className="flex flex-col gap-1.5 border-t pt-3">
-                    <Label htmlFor={`${keyHint}-ids`}>QQ / 群号列表</Label>
+                    <Label htmlFor={`${keyHint}_ids`}>QQ / 群号列表</Label>
                     <Input
-                        id={`${keyHint}-ids`}
+                        id={`${keyHint}_ids`}
                         className="w-full font-mono tabular-nums"
-                        value={formatIds(section.ids)}
+                        value={section.ids.join(', ')}
                         placeholder="10001, 10002"
                         onChange={(e) => onChange({ ...section, ids: parseIds(e.target.value) })}
                     />
@@ -195,11 +220,8 @@ interface ContentSectionProps {
     label: string;
     desc: string;
     section: MessageFilterContentConfig;
-    /** Base `message` section shown when this section is 'default'. */
-    base: MessageFilterContentConfig;
     onChange: (next: MessageFilterContentConfig) => void;
-    /** True on the account tab — 'default' then inherits the base rules. */
-    accountLevel: boolean;
+    allowDefault: boolean;
     keyHint: string;
 }
 
@@ -207,73 +229,58 @@ function ContentSection({
     label,
     desc,
     section,
-    base,
     onChange,
-    accountLevel,
+    allowDefault,
     keyHint,
 }: ContentSectionProps) {
-    const effective = section.mode === 'default' ? base : section;
-
     return (
         <div className="flex flex-col gap-3 rounded-lg border bg-card/40 p-4">
             <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
                     <Label>{label}</Label>
                     <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-                        {section.mode === 'default'
-                            ? accountLevel
-                                ? '继承「通用消息规则」设置。'
-                                : '继承账号默认配置。'
-                            : desc}
+                        {section.mode === 'default' ? '继承账号默认配置。' : desc}
                     </p>
                 </div>
                 <DropdownSelect
                     className="w-32 shrink-0"
                     ariaLabel={label}
                     value={section.mode}
-                    options={contentModeOptions(accountLevel)}
+                    options={contentModeOptions(allowDefault)}
                     onChange={(mode) => onChange({ ...section, mode })}
                 />
             </div>
             {section.mode !== 'default' && (
                 <div className="flex flex-col gap-3 border-t pt-3">
                     <div className="flex flex-col gap-1.5">
-                        <Label htmlFor={`${keyHint}-filters`}>正则规则（每行一条）</Label>
-                        <textarea
-                            id={`${keyHint}-filters`}
-                            className="w-full rounded-md border bg-background px-3 py-2 font-mono text-xs leading-relaxed"
+                        <Label htmlFor={`${keyHint}_filters`}>正则规则（每行一条）</Label>
+                        <LinesInput
+                            id={`${keyHint}_filters`}
                             rows={3}
-                            spellCheck={false}
-                            value={effective.filters.join('\n')}
+                            value={section.filters}
                             placeholder={'^/\n广告'}
-                            onChange={(e) =>
-                                onChange({ ...section, filters: parseLines(e.target.value) })
-                            }
+                            onCommit={(filters) => onChange({ ...section, filters })}
                         />
                         <p className="text-xs leading-relaxed text-muted-foreground">
-                            逐条匹配每个文本段。黑名单：命中即丢弃；白名单：全部未命中才丢弃。
+                            逐条匹配每个文本段。黑名单：命中即丢弃；白名单：全部未命中才丢弃。失焦后保存。
                         </p>
                     </div>
                     <div className="flex flex-col gap-1.5">
-                        <Label htmlFor={`${keyHint}-prefix`}>免过滤前缀（每行一条）</Label>
-                        <textarea
-                            id={`${keyHint}-prefix`}
-                            className="w-full rounded-md border bg-background px-3 py-2 font-mono text-xs leading-relaxed"
+                        <Label htmlFor={`${keyHint}_prefix`}>免过滤前缀（每行一条）</Label>
+                        <LinesInput
+                            id={`${keyHint}_prefix`}
                             rows={2}
-                            spellCheck={false}
-                            value={effective.prefix.join('\n')}
+                            value={section.prefix}
                             placeholder={'#'}
-                            onChange={(e) =>
-                                onChange({ ...section, prefix: parseLines(e.target.value) })
-                            }
+                            onCommit={(prefix) => onChange({ ...section, prefix })}
                         />
                     </div>
                     <div className="flex flex-col gap-1.5">
-                        <Label htmlFor={`${keyHint}-replace`}>前缀替换为</Label>
+                        <Label htmlFor={`${keyHint}_replace`}>前缀替换为</Label>
                         <Input
-                            id={`${keyHint}-replace`}
+                            id={`${keyHint}_replace`}
                             className="w-full font-mono"
-                            value={effective.prefixReplace}
+                            value={section.prefixReplace}
                             placeholder="留空即删除前缀"
                             onChange={(e) =>
                                 onChange({ ...section, prefixReplace: e.target.value })
@@ -317,16 +324,12 @@ function OutputSection({ section, onChange, allowDefault, keyHint }: OutputSecti
             </div>
             {section.mode === 'blacklist' && (
                 <div className="flex flex-col gap-1.5 border-t pt-3">
-                    <Label htmlFor={`${keyHint}-output-filters`}>正则规则（每行一条）</Label>
-                    <textarea
-                        id={`${keyHint}-output-filters`}
-                        className="w-full rounded-md border bg-background px-3 py-2 font-mono text-xs leading-relaxed"
+                    <Label htmlFor={`${keyHint}_output-filters`}>正则规则（每行一条）</Label>
+                    <LinesInput
+                        id={`${keyHint}_output-filters`}
                         rows={3}
-                        spellCheck={false}
-                        value={section.filters.join('\n')}
-                        onChange={(e) =>
-                            onChange({ ...section, filters: parseLines(e.target.value) })
-                        }
+                        value={section.filters}
+                        onCommit={(filters) => onChange({ ...section, filters })}
                     />
                 </div>
             )}
@@ -344,25 +347,19 @@ function RemoveAtsSection({ removeAts, onChange, keyHint }: RemoveAtsSectionProp
     return (
         <div className="flex flex-col gap-3 rounded-lg border bg-card/40 p-4">
             <div className="flex flex-col gap-1.5">
-                <Label htmlFor={`${keyHint}-ats`}>移除 @ 段（QQ 号，每行一个）</Label>
-                <textarea
-                    id={`${keyHint}-ats`}
-                    className="w-full rounded-md border bg-background px-3 py-2 font-mono text-xs leading-relaxed"
+                <Label htmlFor={`${keyHint}_ats`}>移除 @ 段（QQ 号，每行一个）</Label>
+                <LinesInput
+                    id={`${keyHint}_ats`}
                     rows={2}
-                    spellCheck={false}
-                    value={removeAts.join('\n')}
+                    value={removeAts}
                     placeholder="131415"
-                    onChange={(e) => onChange(parseLines(e.target.value))}
+                    onCommit={onChange}
                 />
                 <p className="text-xs leading-relaxed text-muted-foreground">
-                    从投递的消息中删除这些 QQ 号的 @ 段（只影响投递，本地历史保留原文）。
+                    从投递的消息中删除这些 QQ 号的 @
+                    段（只影响投递，本地历史保留原文）。失焦后保存。
                 </p>
             </div>
         </div>
     );
-}
-
-/** Reset helper exposed for the account tab's "恢复默认" action. */
-export function defaultMessageFilterConfig(): MessageFilterConfig {
-    return makeDefaultMessageFilterConfig();
 }

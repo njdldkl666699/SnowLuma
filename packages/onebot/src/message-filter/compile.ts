@@ -6,16 +6,18 @@ import type {
 } from '../types';
 import { CompiledMessageFilter } from './engine';
 
-/** All-pass account defaults: every restriction off, every list empty.
- *  `privateMessage`/`groupMessage` default to `'default'` so they inherit the
- *  base `message` section, matching the OneBotFilter inheritance model. */
+/**
+ * All-pass account defaults: every restriction off, every list empty. There is
+ * deliberately no base `message` section — the account config IS the default,
+ * and `privateMessage` / `groupMessage` stand alone (an adapter-level
+ * `'default'` inherits the account-level counterpart of the same name).
+ */
 export function makeDefaultMessageFilterConfig(): MessageFilterConfig {
     return {
         userId: makeDefaultIdConfig(),
         groupId: makeDefaultIdConfig(),
-        message: makeDefaultContentConfig(),
-        privateMessage: { ...makeDefaultContentConfig(), mode: 'default' },
-        groupMessage: { ...makeDefaultContentConfig(), mode: 'default' },
+        privateMessage: makeDefaultContentConfig(),
+        groupMessage: makeDefaultContentConfig(),
         outputMessage: makeDefaultOutputConfig(),
         removeAts: [],
     };
@@ -28,7 +30,6 @@ export function isPermissiveMessageFilterConfig(config: MessageFilterConfig): bo
         config.userId.ids.length === 0 &&
         effectiveIdMode(config.groupId.mode) === 'on' &&
         config.groupId.ids.length === 0 &&
-        isPermissiveContentConfig(config.message) &&
         isPermissiveContentConfig(config.privateMessage) &&
         isPermissiveContentConfig(config.groupMessage) &&
         effectiveOutputMode(config.outputMessage.mode) === 'on' &&
@@ -38,11 +39,11 @@ export function isPermissiveMessageFilterConfig(config: MessageFilterConfig): bo
 }
 
 /**
- * Resolve one adapter's effective rules: section modes of `'default'` inherit
- * the account-level counterpart, then `privateMessage`/`groupMessage` left at
- * `'default'` inherit the resolved `message` section. A present adapter config
- * replaces the account `removeAts` list (empty list = no removals). Returns
- * `null` when the result is fully permissive so hot paths can skip it.
+ * Resolve one adapter's effective rules: each section left at `'default'`
+ * inherits the account-level counterpart of the same name (an absent account
+ * counterpart behaves as all-pass). A present adapter config replaces the
+ * account `removeAts` list (empty list = no removals). Returns `null` when
+ * the result is fully permissive so hot paths can skip it.
  */
 export function resolveMessageFilterConfig(
     defaults: MessageFilterConfig | undefined,
@@ -53,67 +54,39 @@ export function resolveMessageFilterConfig(
             return null;
         }
 
-        // At account level `'default'` behaves like `'on'`; compile that in.
-        const message =
-            defaults.message.mode === 'default'
-                ? { ...defaults.message, mode: 'on' as const }
-                : defaults.message;
-
+        // At account level 'default' behaves like 'on'; compile that in.
         const resolved: MessageFilterConfig = {
-            userId:
-                defaults.userId.mode === 'default'
-                    ? { ...defaults.userId, mode: 'on' }
-                    : defaults.userId,
-            groupId:
-                defaults.groupId.mode === 'default'
-                    ? { ...defaults.groupId, mode: 'on' }
-                    : defaults.groupId,
-            message,
-            privateMessage:
-                defaults.privateMessage.mode === 'default' ? message : defaults.privateMessage,
-            groupMessage:
-                defaults.groupMessage.mode === 'default' ? message : defaults.groupMessage,
-            outputMessage:
-                defaults.outputMessage.mode === 'default'
-                    ? { ...defaults.outputMessage, mode: 'on' as const }
-                    : defaults.outputMessage,
+            userId: settleIdMode(defaults.userId),
+            groupId: settleIdMode(defaults.groupId),
+            privateMessage: settleContentMode(defaults.privateMessage),
+            groupMessage: settleContentMode(defaults.groupMessage),
+            outputMessage: settleOutputMode(defaults.outputMessage),
             removeAts: defaults.removeAts,
         };
 
         return isPermissiveMessageFilterConfig(resolved) ? null : resolved;
     }
 
-    const message =
-        override.message.mode === 'default'
-            ? (defaults?.message ?? makeDefaultContentConfig())
-            : override.message;
-    // 'default' on private/group first inherits the account-level counterpart,
-    // and only falls back to the resolved base `message` when that is also
-    // 'default' (the OneBotFilter inheritance chain).
-    const resolveSection = (
-        overrideSection: MessageFilterContentConfig,
-        defaultsSection: MessageFilterContentConfig | undefined,
-    ): MessageFilterContentConfig =>
-        overrideSection.mode === 'default'
-            ? defaultsSection && defaultsSection.mode !== 'default'
-                ? defaultsSection
-                : message
-            : overrideSection;
     const resolved: MessageFilterConfig = {
         userId:
             override.userId.mode === 'default'
-                ? (defaults?.userId ?? makeDefaultIdConfig())
+                ? settleIdMode(defaults?.userId ?? makeDefaultIdConfig())
                 : override.userId,
         groupId:
             override.groupId.mode === 'default'
-                ? (defaults?.groupId ?? makeDefaultIdConfig())
+                ? settleIdMode(defaults?.groupId ?? makeDefaultIdConfig())
                 : override.groupId,
-        message,
-        privateMessage: resolveSection(override.privateMessage, defaults?.privateMessage),
-        groupMessage: resolveSection(override.groupMessage, defaults?.groupMessage),
+        privateMessage:
+            override.privateMessage.mode === 'default'
+                ? settleContentMode(defaults?.privateMessage ?? makeDefaultContentConfig())
+                : override.privateMessage,
+        groupMessage:
+            override.groupMessage.mode === 'default'
+                ? settleContentMode(defaults?.groupMessage ?? makeDefaultContentConfig())
+                : override.groupMessage,
         outputMessage:
             override.outputMessage.mode === 'default'
-                ? (defaults?.outputMessage ?? makeDefaultOutputConfig())
+                ? settleOutputMode(defaults?.outputMessage ?? makeDefaultOutputConfig())
                 : override.outputMessage,
         removeAts: override.removeAts,
     };
@@ -143,6 +116,18 @@ function makeDefaultContentConfig(): MessageFilterContentConfig {
 
 function makeDefaultOutputConfig(): MessageFilterOutputConfig {
     return { mode: 'on', filters: [] };
+}
+
+function settleIdMode(config: MessageFilterIdConfig): MessageFilterIdConfig {
+    return config.mode === 'default' ? { ...config, mode: 'on' } : config;
+}
+
+function settleContentMode(config: MessageFilterContentConfig): MessageFilterContentConfig {
+    return config.mode === 'default' ? { ...config, mode: 'on' } : config;
+}
+
+function settleOutputMode(config: MessageFilterOutputConfig): MessageFilterOutputConfig {
+    return config.mode === 'default' ? { ...config, mode: 'on' } : config;
 }
 
 function effectiveIdMode(

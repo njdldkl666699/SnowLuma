@@ -183,14 +183,15 @@ export function makeDefaultFilterOutputConfig(): MessageFilterOutputConfig {
     return { mode: 'on', filters: [] };
 }
 
-/** All-pass account-level filter defaults (mirrors the server factory). */
+/** All-pass account-level filter defaults (mirrors the server factory). No
+ *  base `message` section: the account config IS the default, private/group
+ *  stand alone (per-node 'default' inherits the account counterpart). */
 export function makeDefaultMessageFilterConfig(): MessageFilterConfig {
     return {
         userId: makeDefaultFilterIdConfig(),
         groupId: makeDefaultFilterIdConfig(),
-        message: makeDefaultFilterContentConfig(),
-        privateMessage: { ...makeDefaultFilterContentConfig(), mode: 'default' },
-        groupMessage: { ...makeDefaultFilterContentConfig(), mode: 'default' },
+        privateMessage: makeDefaultFilterContentConfig(),
+        groupMessage: makeDefaultFilterContentConfig(),
         outputMessage: makeDefaultFilterOutputConfig(),
         removeAts: [],
     };
@@ -198,7 +199,7 @@ export function makeDefaultMessageFilterConfig(): MessageFilterConfig {
 
 /** Fill in any missing section of a (possibly partial) filter config. */
 export function normalizeMessageFilterConfig(
-    value: MessageFilterConfig | undefined,
+    value: Partial<MessageFilterConfig> | undefined,
 ): MessageFilterConfig {
     const base = makeDefaultMessageFilterConfig();
 
@@ -209,7 +210,6 @@ export function normalizeMessageFilterConfig(
     return {
         userId: { ...base.userId, ...value.userId },
         groupId: { ...base.groupId, ...value.groupId },
-        message: { ...base.message, ...value.message },
         privateMessage: { ...base.privateMessage, ...value.privateMessage },
         groupMessage: { ...base.groupMessage, ...value.groupMessage },
         outputMessage: { ...base.outputMessage, ...value.outputMessage },
@@ -229,7 +229,6 @@ export function isPermissiveMessageFilter(value: MessageFilterConfig): boolean {
         value.userId.ids.length === 0 &&
         (value.groupId.mode === 'default' || value.groupId.mode === 'on') &&
         value.groupId.ids.length === 0 &&
-        contentPermissive(value.message) &&
         contentPermissive(value.privateMessage) &&
         contentPermissive(value.groupMessage) &&
         (value.outputMessage.mode === 'default' || value.outputMessage.mode === 'on') &&

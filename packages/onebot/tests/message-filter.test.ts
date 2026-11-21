@@ -67,9 +67,10 @@ describe('message filter inheritance resolution', () => {
         expect(overridden?.apply(groupEvent('hi'))?.action ?? 'pass').toBe('pass');
     });
 
-    it('resolves private/group message sections from the base message section', () => {
+    it('private/group sections are independent at account level', () => {
+        // No base `message` section anymore: each content section stands alone.
         const cfg = makeDefaultMessageFilterConfig();
-        cfg.message = {
+        cfg.privateMessage = {
             mode: 'blacklist',
             filters: ['bad'],
             prefix: [],
@@ -77,8 +78,8 @@ describe('message filter inheritance resolution', () => {
         };
 
         const filter = compile(cfg);
-        expect(filter?.apply(groupEvent('has bad word')).action).toBe('drop');
-        expect(filter?.apply(privateEvent('fine')).action).toBe('pass');
+        expect(filter?.apply(privateEvent('has bad word')).action).toBe('drop');
+        expect(filter?.apply(groupEvent('has bad word')).action).toBe('pass');
     });
 });
 
